@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Database
+*.sqlite
+*.db
+
+# Environment variables
+.env
+
+# Data files (user-provided)
+data/fortworth_co.csv
+# Keep sample file
+!data/fortworth_co_sample.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

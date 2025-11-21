@@ -1,0 +1,4 @@
+co_number,business_name,address,city,zip,use_description,issue_date
+123456,Test Restaurant,123 Main St,Fort Worth,76102,RESTAURANT,2025-11-15
+123457,Sample Bar & Grill,456 Oak Ave,Fort Worth,76104,BAR AND RESTAURANT,2025-11-16
+123458,Downtown Lounge,789 Commerce St,Fort Worth,76102,LOUNGE,2025-11-17
