@@ -10,7 +10,7 @@ ENV/
 env/
 
 # Database
-*.sqlite
+# *.sqlite
 *.db
 
 # Environment variables
@@ -31,3 +31,4 @@ data/fortworth_co.csv
 # OS
 .DS_Store
 Thumbs.db
+.vercel
