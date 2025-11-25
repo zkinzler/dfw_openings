@@ -10,8 +10,9 @@ from typing import List, Dict, Any
 from config import SOCRATA_APP_TOKEN
 
 # Texas Comptroller Active Sales Tax Permit Holders
-# https://data.texas.gov/dataset/Active-Sales-Tax-Permit-Holders/9e32-2272
-DATASET_ID = "9e32-2272"
+# New Dataset ID as of Nov 2025: 3kx8-uryv
+# https://data.texas.gov/dataset/All-Permitted-Sales-Tax-Locations-and-Local-Sales-/3kx8-uryv
+DATASET_ID = "3kx8-uryv"
 BASE_URL = f"https://data.texas.gov/resource/{DATASET_ID}.json"
 
 # NAICS Codes for Bars and Restaurants
@@ -28,12 +29,16 @@ TARGET_NAICS = [
     "722515"
 ]
 
-# Target Counties for DFW
+# Target Counties for DFW (using Comptroller County Codes)
+# Dallas: 057
+# Tarrant: 220
+# Collin: 043
+# Denton: 061
 TARGET_COUNTIES = [
-    "DALLAS",
-    "TARRANT",
-    "COLLIN",
-    "DENTON"
+    "057",
+    "220",
+    "043",
+    "061"
 ]
 
 def fetch_sales_tax_permits_since(days_ago: int = 7) -> List[Dict[str, Any]]:
@@ -43,19 +48,19 @@ def fetch_sales_tax_permits_since(days_ago: int = 7) -> List[Dict[str, Any]]:
     cutoff_date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
     
     # Construct SOQL query
-    # We want:
-    # - Recent permit issue dates
-    # - In our target counties
-    # - In our target NAICS codes
+    # New Schema Mapping:
+    # - permit_date (was outlet_permit_issue_date)
+    # - naics (was naics_code)
+    # - loc_county (was outlet_county)
     
-    naics_filter = " OR ".join([f"naics_code='{code}'" for code in TARGET_NAICS])
-    county_filter = " OR ".join([f"outlet_county='{county}'" for county in TARGET_COUNTIES])
+    naics_filter = " OR ".join([f"naics='{code}'" for code in TARGET_NAICS])
+    county_filter = " OR ".join([f"loc_county='{code}'" for code in TARGET_COUNTIES])
     
-    where_clause = f"outlet_permit_issue_date >= '{cutoff_date}' AND ({naics_filter}) AND ({county_filter})"
+    where_clause = f"permit_date >= '{cutoff_date}' AND ({naics_filter}) AND ({county_filter})"
     
     params = {
         "$where": where_clause,
-        "$order": "outlet_permit_issue_date DESC",
+        "$order": "permit_date DESC",
         "$limit": 2000
     }
     
@@ -82,23 +87,27 @@ def to_source_events(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     events = []
     
     for r in records:
-        # Skip if no taxpayer name or outlet name
-        if not r.get("taxpayer_name") or not r.get("outlet_name"):
+        # Skip if no taxpayer name or location name
+        if not r.get("tp_name") or not r.get("loc_name"):
             continue
             
         # Create a unique ID
-        # taxpayer_number + outlet_number is usually unique
-        source_id = f"{r.get('taxpayer_number')}-{r.get('outlet_number')}"
+        # tp_number + loc_number is unique
+        source_id = f"{r.get('tp_number')}-{r.get('loc_number')}"
         
         # Determine event type
         # We treat "permit issued" as the event
-        event_date = r.get("outlet_permit_issue_date", "").split("T")[0]
+        event_date = r.get("permit_date", "").split("T")[0]
         
         # Construct address
-        address = r.get("outlet_street", "")
-        city = r.get("outlet_city", "")
+        # New schema splits address into number and text
+        addr_num = r.get("address_number", "")
+        addr_text = r.get("address_text", "")
+        address = f"{addr_num} {addr_text}".strip()
         
-        # Store NAICS info in payload for later use
+        city = r.get("loc_city", "")
+        
+        # Store full record in payload
         payload = r.copy()
         
         events.append({
@@ -106,10 +115,10 @@ def to_source_events(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "source_record_id": source_id,
             "event_type": "permit_issued",
             "event_date": event_date,
-            "raw_name": r.get("outlet_name"),
+            "raw_name": r.get("loc_name"),
             "raw_address": address,
             "city": city,
-            "url": "https://data.texas.gov/dataset/Active-Sales-Tax-Permit-Holders/9e32-2272",
+            "url": f"https://data.texas.gov/dataset/All-Permitted-Sales-Tax-Locations-and-Local-Sales-/{DATASET_ID}",
             "payload_json": json.dumps(payload)
         })
         
