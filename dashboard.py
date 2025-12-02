@@ -8,6 +8,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
+from streamlit_autorefresh import st_autorefresh
 from config import DB_PATH
 
 
@@ -65,6 +66,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Auto-refresh every 60 seconds (60000 milliseconds)
+st_autorefresh(interval=60000, limit=None, key="data_refresh")
 
 st.title("🍽️ DFW Restaurant & Bar Openings")
 st.caption("Data from TABC, Dallas CO, Fort Worth CO, and Texas Sales Tax")
@@ -126,35 +130,74 @@ has_phone = st.sidebar.checkbox("Has Phone Number", value=False)
 st.sidebar.subheader("Date Range")
 st.sidebar.caption("Filter by first_seen_date")
 
-# Calculate default date range
-default_end = datetime.now().date()
-default_start = default_end - timedelta(days=30)
+# Quick date range presets
+date_preset = st.sidebar.selectbox(
+    "Quick Select",
+    options=[
+        "Last 7 Days",
+        "Last 30 Days",
+        "Last 90 Days",
+        "Last 6 Months",
+        "Last Year",
+        "All Time",
+        "Custom Range"
+    ],
+    index=1,  # Default to Last 30 Days
+    help="Choose a preset date range or select Custom Range for manual selection"
+)
 
-# Get min/max dates from data for better UX
+# Calculate date range based on preset
+today = datetime.now().date()
+if date_preset == "Last 7 Days":
+    start_date = today - timedelta(days=7)
+    end_date = today
+elif date_preset == "Last 30 Days":
+    start_date = today - timedelta(days=30)
+    end_date = today
+elif date_preset == "Last 90 Days":
+    start_date = today - timedelta(days=90)
+    end_date = today
+elif date_preset == "Last 6 Months":
+    start_date = today - timedelta(days=180)
+    end_date = today
+elif date_preset == "Last Year":
+    start_date = today - timedelta(days=365)
+    end_date = today
+elif date_preset == "All Time":
+    if not df_venues["first_seen_date"].isna().all():
+        start_date = pd.to_datetime(df_venues["first_seen_date"].min()).date()
+    else:
+        start_date = today - timedelta(days=365)
+    end_date = today
+else:  # Custom Range
+    start_date = today - timedelta(days=30)
+    end_date = today
+
+# Get min/max dates from data
 if not df_venues["first_seen_date"].isna().all():
     min_date = pd.to_datetime(df_venues["first_seen_date"].min()).date()
     max_date = pd.to_datetime(df_venues["first_seen_date"].max()).date()
 else:
-    min_date = default_start
-    max_date = default_end
+    min_date = today - timedelta(days=365)
+    max_date = today
 
-date_range = st.sidebar.date_input(
-    "Select date range",
-    value=(max(default_start, min_date), max_date),
-    min_value=min_date,
-    max_value=max_date,
-    help="Filter venues by when they were first seen"
-)
+# Show custom date picker only when Custom Range is selected
+if date_preset == "Custom Range":
+    date_range = st.sidebar.date_input(
+        "Select date range",
+        value=(start_date, end_date),
+        min_value=min_date,
+        max_value=today,
+        help="Filter venues by when they were first seen"
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
 
-# Handle date range input
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start_date, end_date = date_range
-    start_date_str = start_date.strftime("%Y-%m-%d")
-    end_date_str = end_date.strftime("%Y-%m-%d")
-else:
-    # Single date selected or invalid, use defaults
-    start_date_str = default_start.strftime("%Y-%m-%d")
-    end_date_str = default_end.strftime("%Y-%m-%d")
+start_date_str = start_date.strftime("%Y-%m-%d")
+end_date_str = end_date.strftime("%Y-%m-%d")
+
+# Show selected date range
+st.sidebar.caption(f"Showing: {start_date_str} to {end_date_str}")
 
 # Refresh button
 if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
