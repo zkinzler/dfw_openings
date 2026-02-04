@@ -1,25 +1,32 @@
 """
 Arlington Building Permit data extractor.
-Fetches issued permits from Arlington Open Data (ArcGIS Hub).
-Filters for restaurant/bar-related permits.
+Scrapes the SmartGuide-based permit portal.
 
-Data includes 3-year view of ALL permits (residential, commercial, sign, fence, pool, CO).
-Updated daily.
+Portal: https://ap.arlingtontx.gov/AP/sfjsp?interviewID=PublicSearch
 """
 
 import json
 import requests
 from datetime import datetime
-
-from config import ARLINGTON_ARCGIS_URL
+from bs4 import BeautifulSoup
+try:
+    from config import ARLINGTON_PORTAL_URL
+except ImportError:
+    ARLINGTON_PORTAL_URL = "https://ap.arlingtontx.gov/AP"
 
 # Keywords to filter for restaurant/bar-related permits
 PERMIT_KEYWORDS = [
-    "restaurant", "bar", "lounge", "tavern", "pub",
-    "kitchen", "hood", "grease trap", "walk-in",
-    "tenant finish", "build-out", "commercial alteration",
-    "food service", "cooking", "brewery", "brewpub",
-    "cafe", "grill"
+    # Business types
+    "restaurant", "bar", "lounge", "tavern", "pub", "brewery", "brewpub",
+    "cafe", "grill", "bistro", "eatery", "food service", "food establishment",
+    # Equipment/systems (early signals)
+    "kitchen", "hood", "grease trap", "grease interceptor", "walk-in",
+    "fire suppression", "fire hood", "ansul", "exhaust hood", "cooking",
+    "type i hood", "type 1 hood",
+    # Permit types
+    "tenant finish", "finish-out", "finish out", "build-out", "build out",
+    "commercial alteration", "commercial remodel", "commercial interior",
+    "occupancy"
 ]
 
 
@@ -33,7 +40,7 @@ def _matches_keywords(text: str) -> bool:
 
 def fetch_arlington_permits_since(since_date: str) -> list[dict]:
     """
-    Fetch Arlington building permit records from ArcGIS FeatureServer.
+    Fetch Arlington building permit records from SmartGuide portal.
 
     Args:
         since_date: ISO date string 'YYYY-MM-DD'
@@ -41,184 +48,163 @@ def fetch_arlington_permits_since(since_date: str) -> list[dict]:
     Returns:
         List of permit records filtered for restaurant/bar keywords
     """
-    if not ARLINGTON_ARCGIS_URL:
-        print("[Arlington] ArcGIS URL not configured.")
+    if not ARLINGTON_PORTAL_URL:
+        print("[Arlington] Portal URL not configured.")
         return []
 
     print(f"[Arlington] Fetching permits since {since_date}...")
 
-    # Convert since_date to timestamp (ms) for ArcGIS query
     try:
-        dt = datetime.strptime(since_date, "%Y-%m-%d")
-        timestamp = int(dt.timestamp() * 1000)
+        since_dt = datetime.strptime(since_date, "%Y-%m-%d")
+        since_formatted = since_dt.strftime("%m/%d/%Y")
     except ValueError:
         print(f"[Arlington] Invalid date format: {since_date}")
         return []
 
-    # Common date field names for ArcGIS permit data
-    # Try multiple field names
-    date_fields = ["IssueDate", "IssuedDate", "PermitDate", "ISSUE_DATE", "Issue_Date"]
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest"
+    })
 
-    params = {
-        "outFields": "*",
-        "f": "json",
-        "resultRecordCount": 5000
-    }
+    all_records = []
 
     try:
-        data = []
-        for date_field in date_fields:
-            params["where"] = f"{date_field} >= {timestamp}"
-            params["orderByFields"] = f"{date_field} DESC"
+        # First, get the search page to establish session
+        search_url = f"{ARLINGTON_PORTAL_URL}/sfjsp"
+        params = {"interviewID": "PublicSearch"}
+        response = session.get(search_url, params=params, timeout=30)
 
-            response = requests.get(
-                f"{ARLINGTON_ARCGIS_URL}/query",
-                params=params,
-                timeout=60
-            )
+        if response.status_code != 200:
+            print(f"[Arlington] Failed to load search page: {response.status_code}")
+            return []
 
-            if response.status_code == 200:
-                result = response.json()
-                if "features" in result and result["features"]:
-                    data = result["features"]
-                    print(f"[Arlington] Using date field: {date_field}")
-                    break
-                elif "error" in result:
-                    # Field doesn't exist, try next
-                    continue
-            else:
+        # Try to submit a permit search via the SmartGuide API
+        # SmartGuide uses AJAX calls for searches
+        api_url = f"{ARLINGTON_PORTAL_URL}/sfjsp"
+
+        # Search keywords
+        search_keywords = ["restaurant", "bar", "food", "kitchen", "hood"]
+
+        for keyword in search_keywords:
+            try:
+                # SmartGuide form submission
+                form_data = {
+                    "interviewID": "PublicSearch",
+                    "com.alphinat.sgs.anticsrftoken": "null",
+                    "btnclk": "btn-permitSearch-search",
+                    "txt-permitSearch-issuedDate": since_formatted,
+                    "txt-permitSearch-Address": "",
+                    "txt-permitSearch-peopleName": keyword,
+                    "txt-permitSearch-contractorBusName": ""
+                }
+
+                response = session.post(api_url, data=form_data, timeout=30)
+
+                if response.status_code == 200:
+                    # Try to parse JSON response
+                    try:
+                        data = response.json()
+                        if isinstance(data, dict):
+                            results = data.get("searchresult-permits", [])
+                            if isinstance(results, list):
+                                for record in results:
+                                    combined_text = " ".join(str(v) for v in record.values())
+                                    if _matches_keywords(combined_text):
+                                        record["_search_keyword"] = keyword
+                                        all_records.append(record)
+                    except json.JSONDecodeError:
+                        # Parse HTML response
+                        soup = BeautifulSoup(response.text, "lxml")
+                        # Look for data tables
+                        for table in soup.find_all("table"):
+                            rows = table.find_all("tr")
+                            for row in rows[1:]:  # Skip header
+                                cells = row.find_all("td")
+                                if len(cells) >= 3:
+                                    record = {
+                                        "permit_number": cells[0].get_text(strip=True) if cells else "",
+                                        "address": cells[1].get_text(strip=True) if len(cells) > 1 else "",
+                                        "description": cells[2].get_text(strip=True) if len(cells) > 2 else "",
+                                        "status": cells[3].get_text(strip=True) if len(cells) > 3 else "",
+                                    }
+                                    combined_text = " ".join(str(v) for v in record.values())
+                                    if _matches_keywords(combined_text):
+                                        record["_search_keyword"] = keyword
+                                        all_records.append(record)
+
+            except Exception as e:
+                print(f"[Arlington] Error searching for '{keyword}': {e}")
                 continue
 
-        if not data:
-            # Fallback: fetch all and filter locally
-            params_fallback = {
-                "where": "1=1",
-                "outFields": "*",
-                "f": "json",
-                "resultRecordCount": 5000
-            }
-            response = requests.get(
-                f"{ARLINGTON_ARCGIS_URL}/query",
-                params=params_fallback,
-                timeout=60
-            )
-            response.raise_for_status()
-            result = response.json()
-            data = result.get("features", [])
-
-        # Extract attributes from features
-        records = [f.get("attributes", {}) for f in data]
-        print(f"[Arlington] Fetched {len(records)} total records")
-
-        # Filter for restaurant/bar-related permits
-        filtered_records = []
-        for record in records:
-            # Check multiple description/type fields
-            description = (
-                record.get("Description") or
-                record.get("DESCRIPTION") or
-                record.get("WorkDescription") or
-                record.get("Work_Description") or
-                record.get("ProjectDescription") or
-                ""
-            )
-
-            permit_type = (
-                record.get("PermitType") or
-                record.get("PERMIT_TYPE") or
-                record.get("Permit_Type") or
-                record.get("Type") or
-                record.get("WorkType") or
-                ""
-            )
-
-            occupancy = (
-                record.get("Occupancy") or
-                record.get("OccupancyType") or
-                record.get("UseType") or
-                record.get("Use_Type") or
-                ""
-            )
-
-            combined_text = f"{description} {permit_type} {occupancy}"
-
-            if _matches_keywords(combined_text):
-                filtered_records.append(record)
-
-        print(f"[Arlington] Found {len(filtered_records)} restaurant/bar-related permits")
-        return filtered_records
-
     except requests.exceptions.RequestException as e:
-        print(f"[Arlington] Error fetching data: {e}")
+        print(f"[Arlington] Request error: {e}")
         return []
-    except Exception as e:
-        print(f"[Arlington] Error processing response: {e}")
-        return []
+
+    # Deduplicate
+    seen = set()
+    unique_records = []
+    for record in all_records:
+        permit_id = record.get("permit_number") or record.get("PermitNum", "")
+        if permit_id:
+            if permit_id not in seen:
+                seen.add(permit_id)
+                unique_records.append(record)
+        else:
+            unique_records.append(record)
+
+    print(f"[Arlington] Found {len(unique_records)} restaurant/bar-related permits")
+    return unique_records
 
 
 def to_source_events(rows: list[dict]) -> list[dict]:
     """
-    Map raw Arlington permit attributes to normalized source_events dicts.
+    Map raw Arlington permit rows to normalized source_events dicts.
     """
     events = []
 
     for row in rows:
         # Extract permit number
         permit_number = (
-            row.get("PermitNumber") or
-            row.get("PERMIT_NUMBER") or
-            row.get("Permit_Number") or
-            row.get("PermitNo") or
-            row.get("PermitID") or
-            row.get("OBJECTID") or
+            row.get("permit_number") or
+            row.get("PermitNum") or
+            row.get("txt-searchpermits-PermitNum") or
             ""
         )
 
-        # Convert timestamp to date
-        date_ms = (
+        # Extract date
+        date_str = (
+            row.get("date") or
             row.get("IssueDate") or
-            row.get("IssuedDate") or
-            row.get("PermitDate") or
-            row.get("ISSUE_DATE") or
-            None
+            row.get("txt-permitSearch-issuedDate") or
+            ""
         )
 
         event_date = None
-        if date_ms:
-            try:
-                event_date = datetime.fromtimestamp(date_ms / 1000).strftime("%Y-%m-%d")
-            except (ValueError, TypeError, OSError):
-                pass
+        if date_str:
+            for fmt in ["%m/%d/%Y", "%Y-%m-%d"]:
+                try:
+                    event_date = datetime.strptime(date_str.strip(), fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    continue
 
-        # Extract business/project name
+        # Extract name/description
         raw_name = (
-            row.get("Applicant") or
-            row.get("ApplicantName") or
-            row.get("Owner") or
-            row.get("OwnerName") or
-            row.get("Contractor") or
-            row.get("ContractorName") or
-            row.get("ProjectName") or
+            row.get("description") or
             row.get("Description") or
+            row.get("txt-searchpermits-worktype") or
             ""
         )
 
-        # Build address
+        # Extract address
         raw_address = (
+            row.get("address") or
             row.get("Address") or
-            row.get("SiteAddress") or
-            row.get("Site_Address") or
-            row.get("Location") or
-            row.get("FullAddress") or
+            row.get("txt-searchpermits-AddressName") or
             ""
         )
-
-        if not raw_address:
-            # Try to construct address from components
-            street_num = row.get("StreetNumber") or row.get("Street_Number") or ""
-            street_name = row.get("StreetName") or row.get("Street_Name") or ""
-            if street_num or street_name:
-                raw_address = f"{street_num} {street_name}".strip()
 
         event = {
             "source_system": "ARLINGTON_PERMIT",
@@ -228,8 +214,8 @@ def to_source_events(rows: list[dict]) -> list[dict]:
             "raw_name": raw_name,
             "raw_address": raw_address,
             "city": "Arlington",
-            "url": "https://opendata.arlingtontx.gov/datasets/arlingtontx::issued-permits",
-            "payload_json": json.dumps(row)
+            "url": "https://ap.arlingtontx.gov/AP/sfjsp?interviewID=PublicSearch",
+            "payload_json": json.dumps(row, default=str)
         }
 
         events.append(event)

@@ -44,6 +44,7 @@ FRISCO_ETRAKIT_URL = os.getenv("FRISCO_ETRAKIT_URL", "https://etrakit.friscotexa
 # Building permit data sources - Additional cities
 DALLAS_PERMITS_ENDPOINT = os.getenv("DALLAS_PERMITS_ENDPOINT", "https://www.dallasopendata.com/resource/e7gq-4sah.json")
 ARLINGTON_ARCGIS_URL = os.getenv("ARLINGTON_ARCGIS_URL", "")  # TBD: Need to discover FeatureServer URL
+ARLINGTON_PORTAL_URL = os.getenv("ARLINGTON_PORTAL_URL", "https://ap.arlingtontx.gov/AP")
 DENTON_ETRAKIT_URL = os.getenv("DENTON_ETRAKIT_URL", "https://dntn-trk.aspgov.com/eTRAKiT")
 
 # EnerGov-based cities

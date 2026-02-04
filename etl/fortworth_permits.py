@@ -16,14 +16,15 @@ from config import FORTWORTH_ACCELA_URL
 PERMIT_KEYWORDS = [
     # Business types
     "restaurant", "bar", "lounge", "tavern", "pub", "brewery", "brewpub",
-    "cafe", "grill", "bistro", "eatery", "food service",
+    "cafe", "grill", "bistro", "eatery", "food service", "food establishment",
     # Equipment/systems (early signals)
     "kitchen", "hood", "grease trap", "grease interceptor", "walk-in",
     "fire suppression", "fire hood", "ansul", "exhaust hood", "cooking",
     "type i hood", "type 1 hood",
     # Permit types
     "tenant finish", "finish-out", "finish out", "build-out", "build out",
-    "commercial alteration", "commercial remodel", "commercial interior"
+    "commercial alteration", "commercial remodel", "commercial interior",
+    "occupancy"
 ]
 
 
@@ -35,75 +36,56 @@ def _matches_keywords(text: str) -> bool:
     return any(keyword in text_lower for keyword in PERMIT_KEYWORDS)
 
 
-def _extract_viewstate(soup: BeautifulSoup) -> dict:
-    """Extract ASP.NET ViewState and related tokens from page."""
-    tokens = {}
-
-    for field_name in ["__VIEWSTATE", "__VIEWSTATEGENERATOR", "__EVENTVALIDATION", "__EVENTTARGET", "__EVENTARGUMENT"]:
-        field = soup.find("input", {"name": field_name})
-        if field:
-            tokens[field_name] = field.get("value", "")
-
-    return tokens
-
-
-def _parse_results_table(soup: BeautifulSoup) -> list[dict]:
-    """Parse permit results from Accela HTML table."""
+def _parse_accela_results(soup: BeautifulSoup) -> list[dict]:
+    """Parse permit results from Accela search results page."""
     records = []
 
-    # Find results table - Accela uses specific ID patterns
-    table = (
-        soup.find("table", {"id": re.compile(r".*GridView.*", re.I)}) or
-        soup.find("table", {"class": re.compile(r".*ACA_Grid.*", re.I)}) or
-        soup.find("div", {"id": re.compile(r".*divGlobalSearchResult.*", re.I)})
-    )
+    # Find tables that contain permit data (look for permit number patterns)
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if len(rows) < 3:
+            continue
 
-    if not table:
-        # Try finding any data table with permit-like content
-        tables = soup.find_all("table")
-        for t in tables:
-            text = t.get_text().lower()
-            if "permit" in text or "record" in text:
-                table = t
-                break
+        # Check if this table has permit-like data
+        table_text = table.get_text()
+        if not any(pattern in table_text for pattern in ["BLD", "FIR", "PO2", "COM", "UFC"]):
+            continue
 
-    if not table:
-        return records
+        # Parse rows - skip header rows
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) < 4:
+                continue
 
-    # Get all rows
-    rows = table.find_all("tr")
+            cell_texts = [c.get_text(strip=True) for c in cells]
 
-    # Find header row
-    headers = []
-    for row in rows:
-        ths = row.find_all(["th"])
-        if ths:
-            headers = [th.get_text(strip=True) for th in ths]
-            break
+            # Skip header/navigation rows
+            if any(skip in " ".join(cell_texts).lower() for skip in ["showing", "download", "date", "record number"]):
+                continue
 
-    if not headers:
-        # Try first row as header
-        first_row = rows[0] if rows else None
-        if first_row:
-            headers = [td.get_text(strip=True) for td in first_row.find_all("td")]
-
-    # Parse data rows
-    for row in rows[1:] if headers else rows:
-        cells = row.find_all("td")
-        if cells and len(cells) >= 3:
+            # Try to identify the structure by looking for date pattern
             record = {}
-            for i, cell in enumerate(cells):
-                if i < len(headers):
-                    record[headers[i]] = cell.get_text(strip=True)
-                else:
-                    record[f"col_{i}"] = cell.get_text(strip=True)
+            for i, text in enumerate(cell_texts):
+                # Date pattern (MM/DD/YYYY)
+                if re.match(r'\d{2}/\d{2}/\d{4}', text):
+                    record["date"] = text
+                # Permit number pattern (letters + numbers)
+                elif re.match(r'^[A-Z]{2,4}[\d\-]+', text):
+                    record["permit_number"] = text
+                # Address pattern (has street type)
+                elif any(st in text.upper() for st in [" ST", " AVE", " BLVD", " DR", " RD", " LN", " WAY", " PKWY"]):
+                    record["address"] = text
+                # Status (common statuses)
+                elif text in ["Plan Review", "Pending", "Issued", "Approved", "In Review", "Awaiting Client Reply", "Active"]:
+                    record["status"] = text
+                # Everything else could be description or project name
+                elif len(text) > 3 and "permit_number" in record and "description" not in record:
+                    record["description"] = text
+                elif len(text) > 3 and "description" in record and "project_name" not in record:
+                    record["project_name"] = text
 
-            # Also try to extract link for detail page
-            link = row.find("a", href=True)
-            if link:
-                record["_detail_link"] = link.get("href", "")
-
-            if record:
+            # Only add if we have at least permit number
+            if record.get("permit_number"):
                 records.append(record)
 
     return records
@@ -138,72 +120,48 @@ def fetch_fortworth_permits_since(since_date: str) -> list[dict]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
 
-    records = []
+    all_records = []
 
-    # Accela modules to search
-    modules = ["Building", "Fire"]
+    # Search for each keyword
+    search_keywords = ["restaurant", "bar", "lounge", "hood", "kitchen", "tenant finish", "food"]
 
-    for module in modules:
+    for keyword in search_keywords:
         try:
-            # Step 1: GET the search page to get ViewState tokens
-            search_url = f"{FORTWORTH_ACCELA_URL}/Cap/CapHome.aspx?module={module}"
-            response = session.get(search_url, timeout=30)
+            # Use global search with date filters
+            search_url = f"{FORTWORTH_ACCELA_URL}/Cap/GlobalSearchResults.aspx"
+            params = {
+                "QueryText": keyword,
+                "FilterByStartDate": since_formatted,
+                "FilterByEndDate": end_formatted
+            }
+
+            response = session.get(search_url, params=params, timeout=30)
 
             if response.status_code != 200:
                 continue
 
             soup = BeautifulSoup(response.text, "lxml")
-            tokens = _extract_viewstate(soup)
+            records = _parse_accela_results(soup)
 
-            # Step 2: Navigate to permit search
-            # Try global search with date range
-            global_search_url = f"{FORTWORTH_ACCELA_URL}/Cap/GlobalSearchResults.aspx"
-
-            # Search for each keyword
-            for keyword in ["restaurant", "commercial alteration", "hood", "tenant finish"]:
-                search_params = {
-                    **tokens,
-                    "ctl00$PlaceHolderMain$txtGSPermitNumber": "",
-                    "ctl00$PlaceHolderMain$txtGSStartDate": since_formatted,
-                    "ctl00$PlaceHolderMain$txtGSEndDate": end_formatted,
-                    "ctl00$PlaceHolderMain$txtGSAddress": "",
-                    "ctl00$PlaceHolderMain$txtGSProjectName": keyword,
-                    "ctl00$PlaceHolderMain$btnSearch": "Search"
-                }
-
-                response = session.post(global_search_url, data=search_params, timeout=30)
-
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, "lxml")
-                    raw_records = _parse_results_table(soup)
-
-                    for record in raw_records:
-                        # Build combined text from all fields
-                        combined_text = " ".join(str(v) for v in record.values())
-
-                        if _matches_keywords(combined_text):
-                            record["_module"] = module
-                            record["_search_keyword"] = keyword
-                            records.append(record)
+            # Filter for restaurant/bar keywords in the full record
+            for record in records:
+                combined_text = " ".join(str(v) for v in record.values())
+                if _matches_keywords(combined_text):
+                    record["_search_keyword"] = keyword
+                    all_records.append(record)
 
         except requests.exceptions.RequestException as e:
-            print(f"[Fort Worth Permits] Request error for {module}: {e}")
+            print(f"[Fort Worth Permits] Request error for '{keyword}': {e}")
             continue
         except Exception as e:
-            print(f"[Fort Worth Permits] Error for {module}: {e}")
+            print(f"[Fort Worth Permits] Error for '{keyword}': {e}")
             continue
 
-    # Deduplicate by permit number if available
+    # Deduplicate by permit number
     seen = set()
     unique_records = []
-    for record in records:
-        permit_id = (
-            record.get("Record Number") or
-            record.get("Permit Number") or
-            record.get("Record #") or
-            record.get("col_0") or
-            ""
-        )
+    for record in all_records:
+        permit_id = record.get("permit_number", "")
         if permit_id:
             if permit_id not in seen:
                 seen.add(permit_id)
@@ -223,61 +181,31 @@ def to_source_events(rows: list[dict]) -> list[dict]:
 
     for row in rows:
         # Extract permit number
-        permit_number = (
-            row.get("Record Number") or
-            row.get("Permit Number") or
-            row.get("Record #") or
-            row.get("Permit #") or
-            row.get("col_0") or
-            ""
-        )
+        permit_number = row.get("permit_number", "")
 
         # Extract date
-        date_str = (
-            row.get("Date") or
-            row.get("Issue Date") or
-            row.get("Issued Date") or
-            row.get("Open Date") or
-            row.get("col_1") or
-            ""
-        )
-
+        date_str = row.get("date", "")
         event_date = None
         if date_str:
-            for fmt in ["%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y"]:
-                try:
-                    event_date = datetime.strptime(date_str.strip(), fmt).strftime("%Y-%m-%d")
-                    break
-                except ValueError:
-                    continue
+            try:
+                event_date = datetime.strptime(date_str, "%m/%d/%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
 
         # Extract description/project name
         raw_name = (
-            row.get("Project Name") or
-            row.get("Description") or
-            row.get("Record Type") or
-            row.get("Type") or
-            row.get("col_2") or
+            row.get("project_name") or
+            row.get("description") or
             ""
         )
 
         # Extract address
-        raw_address = (
-            row.get("Address") or
-            row.get("Location") or
-            row.get("Site Address") or
-            row.get("col_3") or
-            ""
-        )
-
-        # Determine event type based on module
-        module = row.get("_module", "Building")
-        event_type = "fire_permit" if module == "Fire" else "permit_issued"
+        raw_address = row.get("address", "")
 
         event = {
             "source_system": "FORTWORTH_PERMIT",
             "source_record_id": permit_number,
-            "event_type": event_type,
+            "event_type": "permit_issued",
             "event_date": event_date,
             "raw_name": raw_name,
             "raw_address": raw_address,
