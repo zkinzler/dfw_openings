@@ -90,9 +90,15 @@ def infer_status_from_event(event_row: sqlite3.Row) -> str:
     # TABC licenses indicate permitting stage
     if source_system == "TABC":
         return "permitting"
-        
+
     # Sales Tax permits are also permitting stage
     if source_system == "SALES_TAX":
+        return "permitting"
+
+    # Building permits indicate early permitting stage
+    if source_system in ("LEWISVILLE_PERMIT", "MESQUITE_PERMIT", "CARROLLTON_PERMIT",
+                          "PLANO_PERMIT", "FRISCO_PERMIT", "DALLAS_PERMIT",
+                          "ARLINGTON_PERMIT", "DENTON_PERMIT"):
         return "permitting"
 
     # COs indicate opening soon (space is approved)

@@ -138,6 +138,28 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_sales_tax INTEGER")
         conn.commit()
 
+    # Migration: Add building permit source columns to etl_runs
+    try:
+        cursor.execute("SELECT rows_lewisville FROM etl_runs LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrating database: Adding building permit columns to etl_runs...")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_lewisville INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_mesquite INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_carrollton INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_plano INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_frisco INTEGER")
+        conn.commit()
+
+    # Migration: Add new building permit source columns (Dallas, Arlington, Denton)
+    try:
+        cursor.execute("SELECT rows_dallas_permits FROM etl_runs LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrating database: Adding Dallas/Arlington/Denton columns to etl_runs...")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_dallas_permits INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_arlington INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_denton INTEGER")
+        conn.commit()
+
 
 def insert_source_events(conn: sqlite3.Connection, events: list[dict]) -> None:
     """
@@ -309,8 +331,10 @@ def insert_etl_run(conn: sqlite3.Connection, run_data: dict) -> int:
     cursor.execute("""
         INSERT INTO etl_runs
         (run_started_at, run_finished_at, lookback_days,
-         rows_tabc, rows_dallas_co, rows_fortworth_co, rows_sales_tax, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         rows_tabc, rows_dallas_co, rows_fortworth_co, rows_sales_tax,
+         rows_lewisville, rows_mesquite, rows_carrollton, rows_plano, rows_frisco,
+         rows_dallas_permits, rows_arlington, rows_denton, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         run_data.get("run_started_at"),
         run_data.get("run_finished_at"),
@@ -319,6 +343,14 @@ def insert_etl_run(conn: sqlite3.Connection, run_data: dict) -> int:
         run_data.get("rows_dallas_co", 0),
         run_data.get("rows_fortworth_co", 0),
         run_data.get("rows_sales_tax", 0),
+        run_data.get("rows_lewisville", 0),
+        run_data.get("rows_mesquite", 0),
+        run_data.get("rows_carrollton", 0),
+        run_data.get("rows_plano", 0),
+        run_data.get("rows_frisco", 0),
+        run_data.get("rows_dallas_permits", 0),
+        run_data.get("rows_arlington", 0),
+        run_data.get("rows_denton", 0),
         run_data.get("notes", "")
     ))
     conn.commit()

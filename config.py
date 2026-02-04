@@ -34,6 +34,18 @@ FORTWORTH_CO_CSV_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "data", "fortworth_co.csv")
 )
 
+# Building permit data sources - Existing 5 cities
+LEWISVILLE_CSV_API = os.getenv("LEWISVILLE_CSV_API", "https://query.cityoflewisville.com/v2/?Building/PermitsIssued_ReportLinks")
+MESQUITE_ENERGOV_URL = os.getenv("MESQUITE_ENERGOV_URL", "https://energov.cityofmesquite.com")
+CARROLLTON_ARCGIS_URL = os.getenv("CARROLLTON_ARCGIS_URL", "")
+PLANO_ETRAKIT_URL = os.getenv("PLANO_ETRAKIT_URL", "https://trakit.plano.gov/etrakit_prod")
+FRISCO_ETRAKIT_URL = os.getenv("FRISCO_ETRAKIT_URL", "https://etrakit.friscotexas.gov")
+
+# Building permit data sources - New 3 cities
+DALLAS_PERMITS_ENDPOINT = os.getenv("DALLAS_PERMITS_ENDPOINT", "https://www.dallasopendata.com/resource/e7gq-4sah.json")
+ARLINGTON_ARCGIS_URL = os.getenv("ARLINGTON_ARCGIS_URL", "")  # TBD: Need to discover FeatureServer URL
+DENTON_ETRAKIT_URL = os.getenv("DENTON_ETRAKIT_URL", "https://dntn-trk.aspgov.com/eTRAKiT")
+
 # Venue classification keywords
 BAR_KEYWORDS = ["bar", "pub", "taproom", "saloon", "tavern", "lounge", "brewery", "brewpub"]
 RESTAURANT_KEYWORDS = ["restaurant", "cafe", "bistro", "eatery", "grill", "diner"]

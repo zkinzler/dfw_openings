@@ -16,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 
 import db
 from etl import tabc, dallas_co, fortworth_co, sales_tax, merge
+from etl import lewisville_permits, mesquite_permits, carrollton_permits, plano_permits, frisco_permits
+from etl import dallas_permits, arlington_permits, denton_permits
 from config import DEFAULT_LOOKBACK_DAYS
 
 
@@ -63,6 +65,18 @@ def main():
     fortworth_rows = fortworth_co.fetch_fortworth_cos_since(since_iso_date)
     sales_tax_rows = sales_tax.fetch_sales_tax_permits_since(lookback_days)
 
+    # Fetch from building permit sources - existing 5 cities
+    lewisville_rows = lewisville_permits.fetch_lewisville_permits_since(since_iso_date)
+    mesquite_rows = mesquite_permits.fetch_mesquite_permits_since(since_iso_date)
+    carrollton_rows = carrollton_permits.fetch_carrollton_permits_since(since_iso_date)
+    plano_rows = plano_permits.fetch_plano_permits_since(since_iso_date)
+    frisco_rows = frisco_permits.fetch_frisco_permits_since(since_iso_date)
+
+    # Fetch from building permit sources - new 3 cities
+    dallas_permit_rows = dallas_permits.fetch_dallas_permits_since(since_iso_socrata)
+    arlington_rows = arlington_permits.fetch_arlington_permits_since(since_iso_date)
+    denton_rows = denton_permits.fetch_denton_permits_since(since_iso_date)
+
     print()
 
     # Step 2: Transform to source events
@@ -74,13 +88,36 @@ def main():
     fortworth_events = fortworth_co.to_source_events(fortworth_rows)
     sales_tax_events = sales_tax.to_source_events(sales_tax_rows)
 
-    all_events = tabc_events + dallas_events + fortworth_events + sales_tax_events
+    # Transform building permit sources - existing 5 cities
+    lewisville_events = lewisville_permits.to_source_events(lewisville_rows)
+    mesquite_events = mesquite_permits.to_source_events(mesquite_rows)
+    carrollton_events = carrollton_permits.to_source_events(carrollton_rows)
+    plano_events = plano_permits.to_source_events(plano_rows)
+    frisco_events = frisco_permits.to_source_events(frisco_rows)
+
+    # Transform building permit sources - new 3 cities
+    dallas_permit_events = dallas_permits.to_source_events(dallas_permit_rows)
+    arlington_events = arlington_permits.to_source_events(arlington_rows)
+    denton_events = denton_permits.to_source_events(denton_rows)
+
+    all_events = (tabc_events + dallas_events + fortworth_events + sales_tax_events +
+                  lewisville_events + mesquite_events + carrollton_events +
+                  plano_events + frisco_events +
+                  dallas_permit_events + arlington_events + denton_events)
 
     print(f"[Transform] Total events: {len(all_events)}")
     print(f"  - TABC: {len(tabc_events)}")
     print(f"  - Dallas CO: {len(dallas_events)}")
     print(f"  - Fort Worth CO: {len(fortworth_events)}")
-    print(f"  - Sales Tax: {len(sales_tax_events)}\n")
+    print(f"  - Sales Tax: {len(sales_tax_events)}")
+    print(f"  - Lewisville Permits: {len(lewisville_events)}")
+    print(f"  - Mesquite Permits: {len(mesquite_events)}")
+    print(f"  - Carrollton Permits: {len(carrollton_events)}")
+    print(f"  - Plano Permits: {len(plano_events)}")
+    print(f"  - Frisco Permits: {len(frisco_events)}")
+    print(f"  - Dallas Permits: {len(dallas_permit_events)}")
+    print(f"  - Arlington Permits: {len(arlington_events)}")
+    print(f"  - Denton Permits: {len(denton_events)}\n")
 
     # Step 3: Load into database
     print("Step 3: Loading data into database...")
@@ -114,6 +151,14 @@ def main():
             "rows_dallas_co": len(dallas_events),
             "rows_fortworth_co": len(fortworth_events),
             "rows_sales_tax": len(sales_tax_events),
+            "rows_lewisville": len(lewisville_events),
+            "rows_mesquite": len(mesquite_events),
+            "rows_carrollton": len(carrollton_events),
+            "rows_plano": len(plano_events),
+            "rows_frisco": len(frisco_events),
+            "rows_dallas_permits": len(dallas_permit_events),
+            "rows_arlington": len(arlington_events),
+            "rows_denton": len(denton_events),
             "notes": f"Processed {len(all_events)} total events"
         }
 

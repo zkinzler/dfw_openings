@@ -7,3 +7,5 @@ pandas>=2.2.0
 geopy>=2.4.0
 thefuzz>=0.22.0
 python-Levenshtein>=0.25.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0

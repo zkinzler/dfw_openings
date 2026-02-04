@@ -1,8 +1,9 @@
 # Project Status: DFW Openings Lead Generator
-**Date:** 2025-11-21
+**Date:** 2025-11-26
+**Status:** 🟢 Stable & Deployed
 
 ## Current State
-The project is fully functional and installed in `/Users/zachkinzler/dfw_openings/`.
+The project is fully functional, stable, and backed up to GitHub.
 
 ### Features Implemented
 - **ETL Pipeline:** Fetches data from TABC, Dallas CO, Fort Worth CO (ArcGIS API), and Texas Sales Tax.
@@ -12,6 +13,13 @@ The project is fully functional and installed in `/Users/zachkinzler/dfw_opening
 - **Notifications:** Code for Email/Slack alerts is ready (`utils/notifications.py`).
 - **Google Places:** Code for phone/website enrichment is ready (`utils/google_places.py`).
 
+### Recent Fixes
+- **Texas Sales Tax API:** Fixed `404 Error` by updating to the new dataset ID (`3kx8-uryv`). Verified with 30-day data fetch.
+
+### Deployment
+- **GitHub Repo:** [https://github.com/zkinzler/dfw_openings](https://github.com/zkinzler/dfw_openings)
+- **Streamlit Cloud:** Ready for deployment. Connect your GitHub repo to [Streamlit Cloud](https://streamlit.io/cloud) to launch.
+
 ### Missing Configuration
 To enable **Phone Numbers**, **Websites**, and **Notifications**, you need to edit the `.env` file and add:
 1.  `GOOGLE_PLACES_API_KEY`
@@ -19,7 +27,7 @@ To enable **Phone Numbers**, **Websites**, and **Notifications**, you need to ed
 3.  `SMTP_PASSWORD` (optional for email)
 
 ## How to Resume
-1.  **Activate Environment:** Ensure you have the dependencies installed (`pip install -r requirements.txt`).
+1.  **Activate Environment:** `source .venv/bin/activate`
 2.  **Run Pipeline:** `python3 run_etl.py --days 30`
 3.  **Run Geocoding:** `python3 run_geocoding.py`
 4.  **Start Dashboard:** `streamlit run dashboard.py`
