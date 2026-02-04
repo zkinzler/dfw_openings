@@ -17,7 +17,7 @@ SOCRATA_APP_TOKEN = os.getenv("SOCRATA_APP_TOKEN")
 FORTWORTH_ARCGIS_TOKEN = os.getenv("FORTWORTH_ARCGIS_TOKEN")
 
 # ETL configuration
-DEFAULT_LOOKBACK_DAYS = int(os.getenv("DEFAULT_LOOKBACK_DAYS", "7"))
+DEFAULT_LOOKBACK_DAYS = int(os.getenv("DEFAULT_LOOKBACK_DAYS", "14"))  # Bi-weekly default
 
 # Geographic scope
 TARGET_COUNTIES = ["DALLAS", "TARRANT", "COLLIN", "DENTON"]
