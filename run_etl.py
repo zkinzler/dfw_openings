@@ -18,6 +18,7 @@ import db
 from etl import tabc, dallas_co, fortworth_co, sales_tax, merge
 from etl import lewisville_permits, mesquite_permits, carrollton_permits, plano_permits, frisco_permits
 from etl import dallas_permits, arlington_permits, denton_permits
+from etl import mckinney_permits, southlake_permits, fortworth_permits
 from config import DEFAULT_LOOKBACK_DAYS
 
 
@@ -72,10 +73,15 @@ def main():
     plano_rows = plano_permits.fetch_plano_permits_since(since_iso_date)
     frisco_rows = frisco_permits.fetch_frisco_permits_since(since_iso_date)
 
-    # Fetch from building permit sources - new 3 cities
+    # Fetch from building permit sources - additional cities
     dallas_permit_rows = dallas_permits.fetch_dallas_permits_since(since_iso_socrata)
     arlington_rows = arlington_permits.fetch_arlington_permits_since(since_iso_date)
     denton_rows = denton_permits.fetch_denton_permits_since(since_iso_date)
+
+    # Fetch from EnerGov and Accela cities
+    mckinney_rows = mckinney_permits.fetch_mckinney_permits_since(since_iso_date)
+    southlake_rows = southlake_permits.fetch_southlake_permits_since(since_iso_date)
+    fortworth_permit_rows = fortworth_permits.fetch_fortworth_permits_since(since_iso_date)
 
     print()
 
@@ -95,15 +101,21 @@ def main():
     plano_events = plano_permits.to_source_events(plano_rows)
     frisco_events = frisco_permits.to_source_events(frisco_rows)
 
-    # Transform building permit sources - new 3 cities
+    # Transform building permit sources - additional cities
     dallas_permit_events = dallas_permits.to_source_events(dallas_permit_rows)
     arlington_events = arlington_permits.to_source_events(arlington_rows)
     denton_events = denton_permits.to_source_events(denton_rows)
 
+    # Transform EnerGov and Accela cities
+    mckinney_events = mckinney_permits.to_source_events(mckinney_rows)
+    southlake_events = southlake_permits.to_source_events(southlake_rows)
+    fortworth_permit_events = fortworth_permits.to_source_events(fortworth_permit_rows)
+
     all_events = (tabc_events + dallas_events + fortworth_events + sales_tax_events +
                   lewisville_events + mesquite_events + carrollton_events +
                   plano_events + frisco_events +
-                  dallas_permit_events + arlington_events + denton_events)
+                  dallas_permit_events + arlington_events + denton_events +
+                  mckinney_events + southlake_events + fortworth_permit_events)
 
     print(f"[Transform] Total events: {len(all_events)}")
     print(f"  - TABC: {len(tabc_events)}")
@@ -117,7 +129,10 @@ def main():
     print(f"  - Frisco Permits: {len(frisco_events)}")
     print(f"  - Dallas Permits: {len(dallas_permit_events)}")
     print(f"  - Arlington Permits: {len(arlington_events)}")
-    print(f"  - Denton Permits: {len(denton_events)}\n")
+    print(f"  - Denton Permits: {len(denton_events)}")
+    print(f"  - McKinney Permits: {len(mckinney_events)}")
+    print(f"  - Southlake Permits: {len(southlake_events)}")
+    print(f"  - Fort Worth Permits: {len(fortworth_permit_events)}\n")
 
     # Step 3: Load into database
     print("Step 3: Loading data into database...")
@@ -159,6 +174,9 @@ def main():
             "rows_dallas_permits": len(dallas_permit_events),
             "rows_arlington": len(arlington_events),
             "rows_denton": len(denton_events),
+            "rows_mckinney": len(mckinney_events),
+            "rows_southlake": len(southlake_events),
+            "rows_fortworth_permits": len(fortworth_permit_events),
             "notes": f"Processed {len(all_events)} total events"
         }
 

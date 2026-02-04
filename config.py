@@ -41,10 +41,17 @@ CARROLLTON_ARCGIS_URL = os.getenv("CARROLLTON_ARCGIS_URL", "")
 PLANO_ETRAKIT_URL = os.getenv("PLANO_ETRAKIT_URL", "https://trakit.plano.gov/etrakit_prod")
 FRISCO_ETRAKIT_URL = os.getenv("FRISCO_ETRAKIT_URL", "https://etrakit.friscotexas.gov")
 
-# Building permit data sources - New 3 cities
+# Building permit data sources - Additional cities
 DALLAS_PERMITS_ENDPOINT = os.getenv("DALLAS_PERMITS_ENDPOINT", "https://www.dallasopendata.com/resource/e7gq-4sah.json")
 ARLINGTON_ARCGIS_URL = os.getenv("ARLINGTON_ARCGIS_URL", "")  # TBD: Need to discover FeatureServer URL
 DENTON_ETRAKIT_URL = os.getenv("DENTON_ETRAKIT_URL", "https://dntn-trk.aspgov.com/eTRAKiT")
+
+# EnerGov-based cities
+MCKINNEY_ENERGOV_URL = os.getenv("MCKINNEY_ENERGOV_URL", "https://egov.mckinneytexas.org/EnerGov_Prod/SelfService")
+SOUTHLAKE_ENERGOV_URL = os.getenv("SOUTHLAKE_ENERGOV_URL", "https://energov.cityofsouthlake.com/EnerGov_Prod/SelfService")
+
+# Accela-based cities
+FORTWORTH_ACCELA_URL = os.getenv("FORTWORTH_ACCELA_URL", "https://aca-prod.accela.com/CFW")
 
 # Venue classification keywords
 BAR_KEYWORDS = ["bar", "pub", "taproom", "saloon", "tavern", "lounge", "brewery", "brewpub"]

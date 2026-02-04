@@ -160,6 +160,16 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_denton INTEGER")
         conn.commit()
 
+    # Migration: Add McKinney, Southlake, Fort Worth permit columns
+    try:
+        cursor.execute("SELECT rows_mckinney FROM etl_runs LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrating database: Adding McKinney/Southlake/FortWorth permit columns...")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_mckinney INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_southlake INTEGER")
+        cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_fortworth_permits INTEGER")
+        conn.commit()
+
 
 def insert_source_events(conn: sqlite3.Connection, events: list[dict]) -> None:
     """
@@ -333,8 +343,9 @@ def insert_etl_run(conn: sqlite3.Connection, run_data: dict) -> int:
         (run_started_at, run_finished_at, lookback_days,
          rows_tabc, rows_dallas_co, rows_fortworth_co, rows_sales_tax,
          rows_lewisville, rows_mesquite, rows_carrollton, rows_plano, rows_frisco,
-         rows_dallas_permits, rows_arlington, rows_denton, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         rows_dallas_permits, rows_arlington, rows_denton,
+         rows_mckinney, rows_southlake, rows_fortworth_permits, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         run_data.get("run_started_at"),
         run_data.get("run_finished_at"),
@@ -351,6 +362,9 @@ def insert_etl_run(conn: sqlite3.Connection, run_data: dict) -> int:
         run_data.get("rows_dallas_permits", 0),
         run_data.get("rows_arlington", 0),
         run_data.get("rows_denton", 0),
+        run_data.get("rows_mckinney", 0),
+        run_data.get("rows_southlake", 0),
+        run_data.get("rows_fortworth_permits", 0),
         run_data.get("notes", "")
     ))
     conn.commit()
