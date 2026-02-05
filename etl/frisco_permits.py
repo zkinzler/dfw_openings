@@ -1,10 +1,11 @@
 """
 Frisco Building Permit data extractor.
 Uses eTRAKiT ASP.NET form scraping with BeautifulSoup.
-Shares patterns with Plano eTRAKiT module.
+Requires Public login, then searches by address keywords.
 """
 
 import json
+import re
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -15,7 +16,8 @@ PERMIT_KEYWORDS = [
     "restaurant", "bar", "lounge", "tavern", "pub",
     "kitchen", "hood", "grease trap", "walk-in",
     "tenant finish", "build-out", "commercial alteration",
-    "food service", "cooking", "brewery", "brewpub"
+    "food service", "cooking", "brewery", "brewpub",
+    "cafe", "grill", "bistro", "eatery"
 ]
 
 
@@ -46,48 +48,52 @@ def _extract_viewstate(soup: BeautifulSoup) -> dict:
     return tokens
 
 
-def _parse_results_table(soup: BeautifulSoup) -> list[dict]:
-    """Parse permit results from HTML table."""
+def _parse_etrakit_results(soup: BeautifulSoup) -> list[dict]:
+    """Parse permit results from eTRAKiT search results page."""
     records = []
 
-    # Find results table - common eTRAKiT patterns
-    table = (
-        soup.find("table", {"id": "ctl00_cphContent_gvResults"}) or
-        soup.find("table", {"class": "rgMasterTable"}) or
-        soup.find("table", {"id": "resultsGrid"}) or
-        soup.find("table", {"class": "results-table"})
-    )
-
-    if not table:
-        # Try finding any data table
-        tables = soup.find_all("table")
-        for t in tables:
-            rows = t.find_all("tr")
-            if len(rows) > 1:  # Has header + data rows
-                table = t
-                break
-
-    if not table:
+    # Find the RadGrid div and its master table
+    radgrid = soup.find("div", {"class": re.compile("RadGrid")})
+    if not radgrid:
         return records
 
-    # Get headers
-    headers = []
-    header_row = table.find("tr")
-    if header_row:
-        for th in header_row.find_all(["th", "td"]):
-            headers.append(th.get_text(strip=True))
+    master_table = radgrid.find("table", {"class": re.compile("rgMasterTable")})
+    if not master_table:
+        return records
 
-    # Parse data rows
-    rows = table.find_all("tr")[1:]  # Skip header
-    for row in rows:
+    rows = master_table.find_all("tr")
+    if not rows:
+        return records
+
+    # First row is headers
+    headers = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+    if "PERMIT NO" not in headers:
+        return records
+
+    # Parse data rows (skip header and pagination rows)
+    for row in rows[1:]:
         cells = row.find_all("td")
-        if len(cells) >= len(headers) and headers:
-            record = {}
-            for i, header in enumerate(headers):
-                if i < len(cells):
-                    record[header] = cells[i].get_text(strip=True)
-            if record:
-                records.append(record)
+        if len(cells) < 3:
+            continue
+
+        cell_texts = [c.get_text(strip=True) for c in cells]
+
+        # Skip pagination/control rows
+        if "Buttons to move" in " ".join(cell_texts) or "page " in " ".join(cell_texts).lower():
+            continue
+        if all(not t for t in cell_texts):
+            continue
+
+        # Build record from cells matching headers
+        record = {}
+        for i, header in enumerate(headers):
+            if i < len(cells):
+                record[header] = cells[i].get_text(strip=True)
+
+        # Only add if we have a valid permit number (format: YY-NNNNN)
+        permit_no = record.get("PERMIT NO", "")
+        if permit_no and re.match(r"\d{2}-\d+", permit_no):
+            records.append(record)
 
     return records
 
@@ -108,107 +114,93 @@ def fetch_frisco_permits_since(since_date: str) -> list[dict]:
 
     print(f"[Frisco] Fetching permits since {since_date}...")
 
-    try:
-        since_dt = datetime.strptime(since_date, "%Y-%m-%d")
-        # Format for eTRAKiT form (typically MM/DD/YYYY)
-        since_formatted = since_dt.strftime("%m/%d/%Y")
-        end_formatted = datetime.now().strftime("%m/%d/%Y")
-    except ValueError:
-        print(f"[Frisco] Invalid date format: {since_date}")
-        return []
-
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
 
-    records = []
+    all_records = []
+    search_url = f"{FRISCO_ETRAKIT_URL}/etrakit/Search/permit.aspx"
 
-    # Try multiple possible search page paths (prioritize the correct one)
-    search_paths = [
-        "/etrakit/Search/permit.aspx",  # Correct path for Frisco
-        "/Search/permit.aspx",
-        "/Search/case.aspx"
-    ]
+    try:
+        # Step 1: GET the search page
+        response = session.get(search_url, timeout=30)
+        response.raise_for_status()
 
-    for search_path in search_paths:
-        try:
-            # Step 1: GET the search page to get ViewState tokens
-            search_url = f"{FRISCO_ETRAKIT_URL}{search_path}"
-            response = session.get(search_url, timeout=30)
+        soup = BeautifulSoup(response.text, "lxml")
+        tokens = _extract_viewstate(soup)
 
-            if response.status_code == 404:
+        if not tokens:
+            print("[Frisco] Could not extract ViewState tokens")
+            return []
+
+        # Step 2: Login as Public
+        login_data = {
+            **tokens,
+            "__EVENTTARGET": "",
+            "__EVENTARGUMENT": "",
+            "ctl00$ucLogin$ddlSelLogin": "Public",
+            "ctl00$ucLogin$txtLoginId": "",
+            "ctl00$ucLogin$RadTextBox2": "",
+            "ctl00$ucLogin$btnLogin": "Login"
+        }
+
+        response = session.post(search_url, data=login_data, timeout=30)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "lxml")
+        tokens = _extract_viewstate(soup)
+
+        # Step 3: Search using broad queries and filter by keywords
+        # Note: Frisco eTRAKiT has limited public search - only "1" in address returns data
+        search_terms = ["1"]  # Broad search that works
+
+        for term in search_terms:
+            try:
+                search_data = {
+                    **tokens,
+                    "__EVENTTARGET": "ctl00$cplMain$btnSearch",
+                    "__EVENTARGUMENT": "",
+                    "ctl00$cplMain$ddSearchBy": "SITE ADDRESS",
+                    "ctl00$cplMain$ddSearchOper": "Contains",
+                    "ctl00$cplMain$txtSearchString": term,
+                }
+
+                response = session.post(search_url, data=search_data, timeout=30)
+                soup = BeautifulSoup(response.text, "lxml")
+                tokens = _extract_viewstate(soup)
+
+                records = _parse_etrakit_results(soup)
+
+                # Filter for restaurant/bar keywords
+                for record in records:
+                    contractor = record.get("CONTRACTOR NAME", "").lower()
+                    address = record.get("SITE ADDRESS", "").lower()
+                    combined = f"{contractor} {address}"
+                    if _matches_keywords(combined):
+                        record["_search_term"] = term
+                        all_records.append(record)
+
+            except Exception:
                 continue
 
-            response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"[Frisco] Request error: {e}")
+        return []
+    except Exception as e:
+        print(f"[Frisco] Error: {e}")
+        return []
 
-            soup = BeautifulSoup(response.text, "lxml")
-            tokens = _extract_viewstate(soup)
+    # Deduplicate by permit number
+    seen = set()
+    unique_records = []
+    for record in all_records:
+        permit_id = record.get("PERMIT NO") or record.get("Permit No", "")
+        if permit_id and permit_id not in seen:
+            seen.add(permit_id)
+            unique_records.append(record)
 
-            if not tokens:
-                continue
-
-            # Step 2: POST search with date range
-            form_data = {
-                **tokens,
-                "__EVENTTARGET": "",
-                "__EVENTARGUMENT": "",
-                "ctl00$cphContent$txtDateFrom": since_formatted,
-                "ctl00$cphContent$txtDateTo": end_formatted,
-                "ctl00$cphContent$btnSearch": "Search"
-            }
-
-            # Try setting permit type to Commercial
-            permit_type_fields = [
-                "ctl00$cphContent$ddlPermitType",
-                "ctl00$cphContent$cboPermitType",
-                "ctl00$cphContent$lstPermitType"
-            ]
-
-            for field in permit_type_fields:
-                form_data[field] = "Commercial"
-
-            response = session.post(search_url, data=form_data, timeout=30)
-            response.raise_for_status()
-
-            soup = BeautifulSoup(response.text, "lxml")
-
-            # Step 3: Parse results
-            raw_records = _parse_results_table(soup)
-
-            # Filter for restaurant/bar keywords
-            for record in raw_records:
-                description = (
-                    record.get("Description") or
-                    record.get("Work Description") or
-                    record.get("Project") or
-                    record.get("Type") or
-                    ""
-                )
-
-                permit_type = (
-                    record.get("Permit Type") or
-                    record.get("Type") or
-                    ""
-                )
-
-                combined_text = f"{description} {permit_type}"
-
-                if _matches_keywords(combined_text):
-                    records.append(record)
-
-            if raw_records:  # Found a working path
-                break
-
-        except requests.exceptions.RequestException as e:
-            print(f"[Frisco] Request error on {search_path}: {e}")
-            continue
-        except Exception as e:
-            print(f"[Frisco] Error on {search_path}: {e}")
-            continue
-
-    print(f"[Frisco] Found {len(records)} restaurant/bar-related permits")
-    return records
+    print(f"[Frisco] Found {len(unique_records)} restaurant/bar-related permits")
+    return unique_records
 
 
 def to_source_events(rows: list[dict]) -> list[dict]:
@@ -218,22 +210,20 @@ def to_source_events(rows: list[dict]) -> list[dict]:
     events = []
 
     for row in rows:
-        # Extract permit number
+        # Extract permit number (eTRAKiT uses uppercase field names)
         permit_number = (
+            row.get("PERMIT NO") or
+            row.get("Permit No") or
             row.get("Permit Number") or
             row.get("Permit #") or
-            row.get("Permit No") or
-            row.get("Number") or
-            row.get("Case Number") or
             ""
         )
 
-        # Extract date
+        # Extract date (if available in results)
         date_str = (
+            row.get("ISSUE DATE") or
             row.get("Issue Date") or
-            row.get("Issued Date") or
-            row.get("Date") or
-            row.get("Applied Date") or
+            row.get("DATE") or
             ""
         )
 
@@ -246,23 +236,21 @@ def to_source_events(rows: list[dict]) -> list[dict]:
                 except ValueError:
                     continue
 
-        # Extract business/project name
+        # Extract contractor/business name
         raw_name = (
+            row.get("CONTRACTOR NAME") or
+            row.get("Contractor Name") or
+            row.get("APPLICANT") or
             row.get("Applicant") or
-            row.get("Owner") or
-            row.get("Contractor") or
-            row.get("Business Name") or
-            row.get("Project Name") or
-            row.get("Description") or
             ""
         )
 
         # Extract address
         raw_address = (
-            row.get("Address") or
+            row.get("SITE ADDRESS") or
             row.get("Site Address") or
-            row.get("Location") or
-            row.get("Property Address") or
+            row.get("ADDRESS") or
+            row.get("Address") or
             ""
         )
 
@@ -274,7 +262,7 @@ def to_source_events(rows: list[dict]) -> list[dict]:
             "raw_name": raw_name,
             "raw_address": raw_address,
             "city": "Frisco",
-            "url": "https://etrakit.friscotexas.gov/",
+            "url": "https://etrakit.friscotexas.gov/etrakit/Search/permit.aspx",
             "payload_json": json.dumps(row)
         }
 

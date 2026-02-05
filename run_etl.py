@@ -32,15 +32,17 @@ from etl import mckinney_permits, southlake_permits, fortworth_permits
 
 
 # Define all available sources with their fetch and transform functions
+# Status: "working" = returning data, "limited" = partial data, "unavailable" = no public API
 SOURCES = {
-    # Core sources (statewide data)
+    # Core sources (statewide data) - WORKING
     "tabc": {
         "name": "TABC Liquor Licenses",
         "description": "Texas liquor licenses for DFW counties",
         "fetch": lambda since, _: tabc.fetch_tabc_licenses_since(since),
         "transform": tabc.to_source_events,
         "date_format": "socrata",  # YYYY-MM-DDT00:00:00.000
-        "category": "statewide"
+        "category": "statewide",
+        "status": "working"
     },
     "salestax": {
         "name": "Sales Tax Permits",
@@ -48,7 +50,8 @@ SOURCES = {
         "fetch": lambda _, days: sales_tax.fetch_sales_tax_permits_since(days),
         "transform": sales_tax.to_source_events,
         "date_format": "days",  # Uses lookback days directly
-        "category": "statewide"
+        "category": "statewide",
+        "status": "working"
     },
 
     # Dallas area
@@ -58,7 +61,8 @@ SOURCES = {
         "fetch": lambda since, _: dallas_permits.fetch_dallas_permits_since(since),
         "transform": dallas_permits.to_source_events,
         "date_format": "socrata",
-        "category": "dallas"
+        "category": "dallas",
+        "status": "working"
     },
     "dallas_co": {
         "name": "Dallas Certificates of Occupancy",
@@ -66,7 +70,8 @@ SOURCES = {
         "fetch": lambda since, _: dallas_co.fetch_dallas_cos_since(since),
         "transform": dallas_co.to_source_events,
         "date_format": "socrata",
-        "category": "dallas"
+        "category": "dallas",
+        "status": "limited"  # Returns 0 records recently
     },
 
     # Fort Worth / Tarrant
@@ -76,7 +81,8 @@ SOURCES = {
         "fetch": lambda since, _: fortworth_permits.fetch_fortworth_permits_since(since),
         "transform": fortworth_permits.to_source_events,
         "date_format": "iso",  # YYYY-MM-DD
-        "category": "tarrant"
+        "category": "tarrant",
+        "status": "working"
     },
     "fortworth_co": {
         "name": "Fort Worth Certificates of Occupancy",
@@ -84,7 +90,8 @@ SOURCES = {
         "fetch": lambda since, _: fortworth_co.fetch_fortworth_cos_since(since),
         "transform": fortworth_co.to_source_events,
         "date_format": "iso",
-        "category": "tarrant"
+        "category": "tarrant",
+        "status": "unavailable"  # Endpoint not configured
     },
     "arlington": {
         "name": "Arlington Building Permits",
@@ -92,7 +99,8 @@ SOURCES = {
         "fetch": lambda since, _: arlington_permits.fetch_arlington_permits_since(since),
         "transform": arlington_permits.to_source_events,
         "date_format": "iso",
-        "category": "tarrant"
+        "category": "tarrant",
+        "status": "unavailable"  # SmartGuide requires authentication
     },
     "southlake": {
         "name": "Southlake Building Permits",
@@ -100,7 +108,8 @@ SOURCES = {
         "fetch": lambda since, _: southlake_permits.fetch_southlake_permits_since(since),
         "transform": southlake_permits.to_source_events,
         "date_format": "iso",
-        "category": "tarrant"
+        "category": "tarrant",
+        "status": "unavailable"  # EnerGov API requires authentication
     },
 
     # Collin County
@@ -110,7 +119,8 @@ SOURCES = {
         "fetch": lambda since, _: plano_permits.fetch_plano_permits_since(since),
         "transform": plano_permits.to_source_events,
         "date_format": "iso",
-        "category": "collin"
+        "category": "collin",
+        "status": "limited"  # eTRAKiT has limited public access
     },
     "frisco": {
         "name": "Frisco Building Permits",
@@ -118,7 +128,8 @@ SOURCES = {
         "fetch": lambda since, _: frisco_permits.fetch_frisco_permits_since(since),
         "transform": frisco_permits.to_source_events,
         "date_format": "iso",
-        "category": "collin"
+        "category": "collin",
+        "status": "limited"  # eTRAKiT has limited public access
     },
     "mckinney": {
         "name": "McKinney Building Permits",
@@ -126,7 +137,8 @@ SOURCES = {
         "fetch": lambda since, _: mckinney_permits.fetch_mckinney_permits_since(since),
         "transform": mckinney_permits.to_source_events,
         "date_format": "iso",
-        "category": "collin"
+        "category": "collin",
+        "status": "unavailable"  # EnerGov API requires authentication
     },
     "carrollton": {
         "name": "Carrollton Building Permits",
@@ -134,7 +146,8 @@ SOURCES = {
         "fetch": lambda since, _: carrollton_permits.fetch_carrollton_permits_since(since),
         "transform": carrollton_permits.to_source_events,
         "date_format": "iso",
-        "category": "collin"
+        "category": "collin",
+        "status": "unavailable"  # ArcGIS URL not discovered
     },
 
     # Denton County
@@ -144,7 +157,8 @@ SOURCES = {
         "fetch": lambda since, _: denton_permits.fetch_denton_permits_since(since),
         "transform": denton_permits.to_source_events,
         "date_format": "iso",
-        "category": "denton"
+        "category": "denton",
+        "status": "limited"  # eTRAKiT has limited public access
     },
     "lewisville": {
         "name": "Lewisville Building Permits",
@@ -152,7 +166,8 @@ SOURCES = {
         "fetch": lambda since, _: lewisville_permits.fetch_lewisville_permits_since(since),
         "transform": lewisville_permits.to_source_events,
         "date_format": "iso",
-        "category": "denton"
+        "category": "denton",
+        "status": "unavailable"  # API returning empty data
     },
 
     # Other
@@ -162,7 +177,8 @@ SOURCES = {
         "fetch": lambda since, _: mesquite_permits.fetch_mesquite_permits_since(since),
         "transform": mesquite_permits.to_source_events,
         "date_format": "iso",
-        "category": "dallas"
+        "category": "dallas",
+        "status": "unavailable"  # EnerGov API requires authentication
     },
 }
 
@@ -184,6 +200,13 @@ def list_cities():
     print("Available Data Sources")
     print("="*60)
 
+    # Status icons
+    status_icons = {
+        "working": "✓",
+        "limited": "~",
+        "unavailable": "✗"
+    }
+
     # Group by category
     categories = {}
     for key, source in SOURCES.items():
@@ -196,8 +219,13 @@ def list_cities():
         if cat in categories:
             print(f"\n{cat.upper()}:")
             for key, source in categories[cat]:
-                print(f"  {key:15} - {source['name']}")
+                status = source.get("status", "unknown")
+                icon = status_icons.get(status, "?")
+                print(f"  [{icon}] {key:13} - {source['name']}")
                 print(f"                   {source['description']}")
+
+    print("\n" + "-"*60)
+    print("Status Legend:  [✓] Working  [~] Limited  [✗] Unavailable")
 
     print("\n" + "-"*60)
     print("City Groups (shortcuts):")
