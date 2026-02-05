@@ -109,37 +109,88 @@ def infer_status_from_event(event_row: sqlite3.Row) -> str:
     return "unknown"
 
 
-def calculate_priority_score(venue_type: str, status: str) -> int:
+def calculate_priority_score(venue_type: str, status: str,
+                             first_seen_date: str = None,
+                             has_phone: bool = False,
+                             has_website: bool = False,
+                             source_count: int = 1) -> int:
     """
-    Calculate priority score for a venue.
-    Bars > Restaurants, and later stages > earlier stages.
+    Calculate urgency-based priority score for POS sales.
+
+    For POS sales, TIMING is everything. Freshest leads with contact info
+    bubble to the top. Score based on:
+    - Recency (most important - fresh leads are hot)
+    - Stage (permitting is early access, opening_soon is urgent)
+    - Venue type (bars often higher volume)
+    - Contact info availability (can we actually reach them?)
+    - Multi-source validation (more legit)
 
     Args:
         venue_type: 'bar' or 'restaurant'
         status: 'permitting', 'opening_soon', 'open', 'unknown'
+        first_seen_date: When the lead was first discovered (YYYY-MM-DD)
+        has_phone: Whether venue has phone number
+        has_website: Whether venue has website
+        source_count: Number of data sources that found this venue
 
     Returns:
-        Integer score (higher = more interesting)
+        Integer score (higher = more urgent/valuable)
     """
-    base_score = 0
+    from datetime import datetime, date
 
-    # Venue type scoring
-    if venue_type == "bar":
-        base_score = 100
-    elif venue_type == "restaurant":
-        base_score = 80
-    else:
-        base_score = 50
+    score = 0
 
-    # Status bonus
-    status_bonus = {
-        "open": 30,
-        "opening_soon": 20,
-        "permitting": 10,
-        "unknown": 0
-    }
+    # RECENCY IS KING - freshest leads are most valuable
+    if first_seen_date:
+        try:
+            seen_date = datetime.strptime(first_seen_date, "%Y-%m-%d").date()
+            days_old = (date.today() - seen_date).days
 
-    return base_score + status_bonus.get(status, 0)
+            if days_old <= 3:
+                score += 50   # Brand new - HOT
+            elif days_old <= 7:
+                score += 40
+            elif days_old <= 14:
+                score += 25
+            elif days_old <= 30:
+                score += 10
+            # Older leads get no recency bonus
+        except (ValueError, TypeError):
+            pass  # Invalid date, no bonus
+
+    # Stage bonus (permitting is actually good - early access!)
+    if status == 'permitting':
+        score += 30   # Early access before competitors
+    elif status == 'opening_soon':
+        score += 40   # Urgent - they're deciding NOW
+    elif status == 'open':
+        score += 10   # May already have POS, but worth trying
+
+    # Venue type
+    if venue_type == 'bar':
+        score += 20   # Bars often higher volume
+    elif venue_type == 'restaurant':
+        score += 15
+
+    # Has contact info (can actually reach them)
+    if has_phone:
+        score += 25   # Critical for outreach
+    if has_website:
+        score += 5
+
+    # Multi-source validation (more legit)
+    if source_count >= 2:
+        score += 15
+
+    return score
+
+
+def calculate_priority_score_simple(venue_type: str, status: str) -> int:
+    """
+    Simple priority scoring for backward compatibility during ETL.
+    Uses default values for optional parameters.
+    """
+    return calculate_priority_score(venue_type, status)
 
 
 def update_venues_from_unmatched_events(conn: sqlite3.Connection) -> None:
@@ -166,7 +217,9 @@ def update_venues_from_unmatched_events(conn: sqlite3.Connection) -> None:
         # Infer venue properties from this event
         venue_type = infer_venue_type_from_event(event)
         status = infer_status_from_event(event)
-        priority_score = calculate_priority_score(venue_type, status)
+        # Use simple scoring during initial ETL; full scoring happens in recalculation
+        priority_score = calculate_priority_score(venue_type, status,
+                                                  first_seen_date=event["event_date"])
         
         # Extract additional fields if available
         payload_json = event["payload_json"]
@@ -201,3 +254,47 @@ def update_venues_from_unmatched_events(conn: sqlite3.Connection) -> None:
         db.update_source_event_venue(conn, event["id"], venue_id)
 
     print(f"[Merge] Completed processing {len(unmatched_events)} events")
+
+
+def recalculate_all_priority_scores(conn: sqlite3.Connection) -> int:
+    """
+    Recalculate priority scores for all venues using full scoring algorithm.
+    Should be run after enrichment (phone/website) or periodically.
+
+    Returns:
+        Number of venues updated
+    """
+    cursor = conn.cursor()
+
+    # Get all venues with their source counts
+    cursor.execute("""
+        SELECT
+            v.id, v.venue_type, v.status, v.first_seen_date,
+            v.phone, v.website,
+            COUNT(DISTINCT se.source_system) as source_count
+        FROM venues v
+        LEFT JOIN source_events se ON v.id = se.venue_id
+        GROUP BY v.id
+    """)
+
+    venues = cursor.fetchall()
+    updated = 0
+
+    for venue in venues:
+        new_score = calculate_priority_score(
+            venue_type=venue["venue_type"],
+            status=venue["status"],
+            first_seen_date=venue["first_seen_date"],
+            has_phone=bool(venue["phone"]),
+            has_website=bool(venue["website"]),
+            source_count=venue["source_count"] or 1
+        )
+
+        cursor.execute("""
+            UPDATE venues SET priority_score = ? WHERE id = ?
+        """, (new_score, venue["id"]))
+        updated += 1
+
+    conn.commit()
+    print(f"[Merge] Recalculated priority scores for {updated} venues")
+    return updated

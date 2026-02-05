@@ -47,7 +47,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             first_seen_date TEXT,
             last_seen_date TEXT,
             priority_score INTEGER,
-            notes TEXT
+            notes TEXT,
+            lead_status TEXT DEFAULT 'new',
+            next_follow_up DATE,
+            competitor TEXT,
+            lost_reason TEXT
         )
     """)
 
@@ -60,6 +64,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_venues_city_type
             ON venues (city, venue_type)
     """)
+
 
     # source_events table
     cursor.execute("""
@@ -93,6 +98,31 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_source_events_venue
             ON source_events (venue_id)
+    """)
+
+    # lead_activities table for tracking outreach
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lead_activities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venue_id INTEGER NOT NULL,
+            activity_type TEXT NOT NULL,
+            activity_date TEXT DEFAULT (date('now')),
+            notes TEXT,
+            outcome TEXT,
+            next_action_date DATE,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (venue_id) REFERENCES venues(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lead_activities_venue
+            ON lead_activities (venue_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_lead_activities_date
+            ON lead_activities (activity_date)
     """)
 
     # etl_runs table for logging
@@ -168,6 +198,19 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_mckinney INTEGER")
         cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_southlake INTEGER")
         cursor.execute("ALTER TABLE etl_runs ADD COLUMN rows_fortworth_permits INTEGER")
+        conn.commit()
+
+    # Migration: Add lead tracking columns
+    try:
+        cursor.execute("SELECT lead_status FROM venues LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrating database: Adding lead tracking columns...")
+        cursor.execute("ALTER TABLE venues ADD COLUMN lead_status TEXT DEFAULT 'new'")
+        cursor.execute("ALTER TABLE venues ADD COLUMN next_follow_up DATE")
+        cursor.execute("ALTER TABLE venues ADD COLUMN competitor TEXT")
+        cursor.execute("ALTER TABLE venues ADD COLUMN lost_reason TEXT")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_venues_lead_status ON venues (lead_status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_venues_follow_up ON venues (next_follow_up)")
         conn.commit()
 
 
@@ -383,3 +426,111 @@ def get_venues_by_city(conn: sqlite3.Connection, city: str) -> list[sqlite3.Row]
         WHERE city = ?
     """, (city,))
     return cursor.fetchall()
+
+
+def update_lead_status(conn: sqlite3.Connection, venue_id: int, lead_status: str,
+                       next_follow_up: str = None, competitor: str = None,
+                       lost_reason: str = None) -> None:
+    """
+    Update the lead status for a venue.
+
+    Args:
+        venue_id: The venue ID
+        lead_status: One of 'new', 'contacted', 'demo_scheduled', 'won', 'lost', 'not_interested'
+        next_follow_up: Optional follow-up date (YYYY-MM-DD)
+        competitor: Optional competitor name if lost
+        lost_reason: Optional reason for lost/not_interested
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE venues
+        SET lead_status = ?,
+            next_follow_up = COALESCE(?, next_follow_up),
+            competitor = COALESCE(?, competitor),
+            lost_reason = COALESCE(?, lost_reason)
+        WHERE id = ?
+    """, (lead_status, next_follow_up, competitor, lost_reason, venue_id))
+    conn.commit()
+
+
+def add_lead_activity(conn: sqlite3.Connection, venue_id: int, activity_type: str,
+                      notes: str = None, outcome: str = None,
+                      next_action_date: str = None) -> int:
+    """
+    Add an activity record for a lead.
+
+    Args:
+        venue_id: The venue ID
+        activity_type: One of 'call', 'email', 'visit', 'demo', 'note'
+        notes: Activity notes
+        outcome: One of 'no_answer', 'callback', 'interested', 'not_interested', 'demo_booked'
+        next_action_date: Optional next action date (YYYY-MM-DD)
+
+    Returns:
+        The activity ID
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO lead_activities
+        (venue_id, activity_type, notes, outcome, next_action_date)
+        VALUES (?, ?, ?, ?, ?)
+    """, (venue_id, activity_type, notes, outcome, next_action_date))
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_lead_activities(conn: sqlite3.Connection, venue_id: int) -> list[sqlite3.Row]:
+    """
+    Get all activities for a venue, newest first.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM lead_activities
+        WHERE venue_id = ?
+        ORDER BY activity_date DESC, created_at DESC
+    """, (venue_id,))
+    return cursor.fetchall()
+
+
+def get_venues_needing_followup(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """
+    Get venues where next_follow_up date is today or earlier.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM venues
+        WHERE next_follow_up IS NOT NULL
+          AND next_follow_up <= date('now')
+          AND lead_status NOT IN ('won', 'lost', 'not_interested')
+        ORDER BY next_follow_up ASC
+    """)
+    return cursor.fetchall()
+
+
+def get_hot_leads(conn: sqlite3.Connection, days: int = 7) -> list[sqlite3.Row]:
+    """
+    Get new leads from the last N days, sorted by priority score.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM venues
+        WHERE lead_status = 'new'
+          AND first_seen_date >= date('now', ? || ' days')
+        ORDER BY priority_score DESC, first_seen_date DESC
+    """, (f'-{days}',))
+    return cursor.fetchall()
+
+
+def get_lead_counts_by_status(conn: sqlite3.Connection) -> dict:
+    """
+    Get count of venues by lead status.
+    """
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            COALESCE(lead_status, 'new') as status,
+            COUNT(*) as count
+        FROM venues
+        GROUP BY lead_status
+    """)
+    return {row['status']: row['count'] for row in cursor.fetchall()}
